@@ -1,0 +1,198 @@
+--#############
+--# Paulo Trigo
+--#############
+
+
+--==============
+-- DB connection
+--==============
+\set dataBase db_e_commerce_sample
+;
+\set userName postgres
+;
+\connect :dataBase :userName
+--==========================
+--==========================
+
+
+-- additional information about "client_encoding" in:
+-- http://www.postgresql.org/docs/9.6/static/multibyte.html
+-- \encoding WIN1250
+;
+
+
+
+---------------------------------
+
+DROP VIEW IF EXISTS v_product_counts_total;
+DROP VIEW IF EXISTS v_product_counts_from_v_export;
+DROP VIEW IF EXISTS v_transaction_product;
+DROP VIEW IF EXISTS v_export;
+DROP VIEW IF EXISTS v_number_of_events_per_session_number_of_cookies;
+DROP VIEW IF EXISTS v_number_of_cookies_number_of_sessions;
+DROP VIEW IF EXISTS v_cookie_number_of_sessions;
+DROP VIEW IF EXISTS v_cookie_session_number_of_events;
+
+DROP VIEW IF EXISTS v_total_number_of_visitors;
+DROP VIEW IF EXISTS v_total_number_of_events;
+DROP VIEW IF EXISTS v_distribution_of_visitors_and_sessions;
+DROP VIEW IF EXISTS v_distribution_of_events_per_session_and_visitors;
+---------------------------------
+
+
+
+--=============================================================================
+-- total number of events (each tuple is an event)
+--=============================================================================
+CREATE VIEW v_total_number_of_events( totalevents_jan_2012 )
+AS
+SELECT COUNT(*) as total_events
+FROM track
+;
+
+
+
+--=============================================================================
+-- total number of distinct cookies (visitors)
+--=============================================================================
+CREATE VIEW v_total_number_of_visitors( totalnumberofvisitors_cookie_id_jan_2012 )
+AS
+SELECT COUNT(*) AS total_number_of_cookies
+FROM (SELECT DISTINCT cookie_id FROM track) AS T
+;
+
+
+
+
+
+--=============================================================================
+-- aggregate (group) cookies and sessions and get the total number of events
+--=============================================================================
+CREATE VIEW v_cookie_session_number_of_events( cookie_id, session_id, number_of_events_per_session )
+AS
+SELECT cookie_id, session_id, COUNT( * ) as number_of_events_per_session
+FROM track
+GROUP BY cookie_id, session_id
+ORDER BY number_of_events_per_session DESC
+;
+
+
+--SELECT *
+--FROM v_cookie_session_number_of_events
+--;
+
+
+
+--=============================================================================
+-- aggregate cookie and get the total number of sessions (for each cookie)
+-- and the total number of events for each session
+--=============================================================================
+CREATE VIEW v_cookie_number_of_sessions( cookie_id, number_of_sessions, number_of_events )
+AS
+SELECT cookie_id, COUNT(session_id) as number_of_sessions, SUM(number_of_events_per_session) as number_of_events
+FROM v_cookie_session_number_of_events
+GROUP BY cookie_id
+ORDER BY number_of_events DESC, number_of_sessions DESC
+;
+
+
+--SELECT *
+--FROM v_cookie_number_of_sessions
+--;
+
+
+
+--=============================================================================
+-- aggregate number of sessions and get total cookies (visitors) at each session
+--=============================================================================
+CREATE VIEW v_distribution_of_visitors_and_sessions( numberofvisitors, numberofsessions )
+AS
+SELECT COUNT(cookie_id) as numberofvisitors, number_of_sessions as numberofsessions
+FROM v_cookie_number_of_sessions
+GROUP BY numberofsessions
+ORDER BY numberofvisitors DESC, numberofsessions
+;
+
+
+
+--SELECT *
+--FROM v_distribution_of_visitors_and_sessions
+--;
+
+
+
+--=============================================================================
+-- aggregate the number of events per session and get the distribution of
+-- the number of cookies (visitors)
+--=============================================================================
+CREATE VIEW v_distribution_of_events_per_session_and_visitors( numberofeventspersession, numberofvisitors )
+AS
+SELECT number_of_events_per_session as numberofeventspersession, COUNT(cookie_id) as numberofvisitors
+FROM v_cookie_session_number_of_events
+GROUP BY number_of_events_per_session
+ORDER BY numberofeventspersession
+;
+
+
+--SELECT *
+--FROM v_distribution_of_events_per_session_and_visitors
+--;
+
+CREATE VIEW v_distribution_of_visitors_and_number_of_sessions_and_total_number_of_events( visitor_id, numberofsessions, totalnumberofevents )
+AS
+SELECT cookie_id as visitor_id, number_of_sessions as numberofsessions, number_of_events as totalnumberofevents
+FROM v_cookie_number_of_sessions
+WHERE number_of_sessions = 18
+ORDER BY cookie_id
+;
+
+
+--=============================================================================
+-- build a view for the data to be exported and to be transformed into a basket
+-- this may be different depending on the basket you want to build
+--=============================================================================
+CREATE VIEW v_export( cookie_id, session_id, product_gui )
+AS
+SELECT T1.cookie_id, session_id, product_gui
+FROM ( SELECT *
+       FROM v_cookie_number_of_sessions
+       WHERE number_of_sessions >= 5 and number_of_sessions <= 30 ) AS T1
+     INNER JOIN
+     track AS T2
+     ON ( T1.cookie_id = T2.cookie_id )
+WHERE product_gui NOT IN ( 'open', 'home' )
+ORDER BY cookie_id, session_id, product_gui  -- commented for final dataset as this may get too resource consuming
+;
+
+
+--SELECT *
+--FROM v_export
+--;
+
+
+CREATE VIEW v_transaction_product( cookie_id, product_gui )
+AS
+SELECT V.cookie_id, V.product_gui
+FROM v_export as V, track as T
+WHERE V.cookie_id = T.cookie_id AND V.session_id = T.session_id AND V.product_gui = T.product_gui
+GROUP BY V.cookie_id, V.product_gui
+ORDER BY cookie_id, product_gui
+;
+
+-- To view most products viewed
+
+CREATE VIEW v_product_counts_total
+AS
+SELECT product_gui, count(*) as product_count
+FROM track
+GROUP BY product_gui
+ORDER BY product_count DESC
+;
+
+CREATE VIEW v_product_counts_from_v_export
+AS
+SELECT product_gui, count(*) as product_count
+FROM v_transaction_product
+GROUP BY product_gui
+ORDER BY product_count DESC
+;
